@@ -1,0 +1,3 @@
+FROM mysql:8.0.14
+COPY ./mysqlInit/createTables.sql /docker-entrypoint-initdb.d/createTables.sql
+COPY ./mysqlInit/custom-config.cnf /etc/mysql/conf.d/custom-config.cnf

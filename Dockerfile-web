@@ -1,0 +1,15 @@
+FROM openjdk:8-jdk-alpine
+VOLUME /tmp
+VOLUME springLogs:/logs
+ARG DEPENDENCY=target/dependency
+ARG CONFIG=src
+COPY ${DEPENDENCY}/BOOT-INF/lib /app/lib
+COPY ${DEPENDENCY}/META-INF /app/META-INF
+COPY ${DEPENDENCY}/BOOT-INF/classes /app
+COPY ${CONFIG} /app/config
+COPY wait_for.sh /usr/local/bin/
+RUN chmod u+x /usr/local/bin/wait_for.sh
+EXPOSE 8090:8080
+
+ENTRYPOINT ["wait_for.sh", "-host=db", "-port=3306", "--", "java -cp app:app/lib/*:app/config/* hello.Application"]
+#ENTRYPOINT ["java","-cp","app:app/lib/*:app/config/*","hello.Application"]

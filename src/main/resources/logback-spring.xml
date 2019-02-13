@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <property name="LOG_DIR" value="logs/"/>
+    <property name="PS_FILE_NAME" value="psLog"/>
+    <property name="PF_FILE_NAME" value="pfLog"/>
+    <property name="CS_FILE_NAME" value="csLog"/>
+    <property name="CF_FILE_NAME" value="cfLog"/>
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d %-5level [%thread] %logger{0}: %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <appender name="PROV_SUCCESS" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_DIR}${PS_FILE_NAME}.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <!-- daily rollover -->
+            <fileNamePattern>${LOG_DIR}${PS_FILE_NAME}-%d{yyyy-MM-dd}-%i.log</fileNamePattern>
+            <maxFileSize>100MB</maxFileSize>
+        </rollingPolicy>
+        <encoder name="JSON_ENCODER" class="net.logstash.logback.encoder.LoggingEventCompositeJsonEncoder">
+            <providers>
+                <version/> <!-- Logstash json format version, the @version field in the output-->
+                <logLevel/>
+                <loggerName/>
+                <pattern>
+                    <pattern> <!-- we can add some custom fields to be sent with all the log entries.  -->
+                        <!--make filtering easier in Logstash-->
+                        {
+                        "appName": "springBootApp",<!--or searching with Kibana-->
+                        "appVersion": "0.1.0"
+                        }
+                    </pattern>
+                </pattern>
+                <threadName/>
+                <message/>
+                <arguments/> <!--or through StructuredArguments-->
+                <stackTrace/>
+            </providers>
+        </encoder>    </appender>
+
+    <logger name="PS_LOG" level="INFO">
+        <appender-ref ref="PROV_SUCCESS"/>
+    </logger>
+
+    <logger name="CONCOLE_LOG" level="DEBUG">
+        <appender-ref ref="CONSOLE"/>
+    </logger>
+    <root level="DEBUG">
+        <appender-ref ref="CONSOLE" />
+    </root>
+</configuration>
