@@ -60,7 +60,20 @@ logging.level.org.hibernate.type.descriptor.sql.BasicBinder=TRACE
 Ponadto w  katalogu resources znajduje się plik _logback-spring.xml_, Który jest używany do konfiduracji logowania w aplikacji.
 Na uwagę zasługuje fakt, że jako enkoder do logowania wiadomości został użyty enkoder opracowny w projekcie logstash, który zapisuje wiadonoći w formacie JSON co ma wspomagać ładowanie danych z logów do aplikacji ELK.
 
-# Budowanie obrazów aplikacji
+# Budowanie obrazów aplikacji.
+Zanim zaczniemy budowanie obrazów aplikacji należy zapoznać się z podstawowymi zasadami dotyczącymi tego budowania. 
+Każdy plik dockerfile posiada Określoną strukturę:
+* FROM obraz:tag- która wskazuje obraz bazowy dla naszego obrazu i inicjalizuje fazę budowania.
+* instrukcje modyfikujące obraz w dowolnej sekwencji:
+    - ADD argSrc argDest - instrukcja kopiująca pliki a lokalnego systemu plików do systemu plików obrazu. Dodatkowo jej _srcSrc_ może być adresem url albo archiwum tar, które zostanie rozpakowane w _argDest_
+    - COPY argSrc argDest -  instrukcja kopiująca pliki a lokalnego systemu plikó do systemu plików obrazu.
+    - VOLUME src:dest - montuje wolumin na obrazie w lokalizacji dest, który odwołuje się do lokalizacji src na hoscie.   
+    - ENV  klucz watrość - ustawia zmiennąśrodowiskową obrazu. 
+    - EXPOSE port - informuje dockera, że dany obraz nasłuchuje na danym porcie. Istnieje możliwość wyspecyfikowania również protokołu (port/protokół). Domyślnymo protokołem jest TCP. UWAGA! Nie jest to równoznaczne z wystawieniem portu na zewnątrz dockera.  
+    - WORKDIR path - Ustawia "working directory dla instrukcji  RUN, CMD, ENTRYPOINT, COPY i ADD. 
+    - RUN arg - wywołuje na obrazie komendę podaną jako argument.
+* ENTRYPOINT [...,...,...] - komenda która wskazuje punkt startu kontenera. 
+    
 ## Sprawdzenie poprawności działania docker
 Na początku sprawdźmy czy oprogramowanie docker jest zainstalowane poprawnie:
 ~~~~
@@ -94,7 +107,7 @@ For more examples and ideas, visit:
 ### Budowa za pomocą wiersza poleceń:
 Budowa podstawowego obrazu zawierającego serwer MySQL wygląda następująco:
 ~~~~
-$ docker run --name db -e MYSQL_ROOT_PASSWORD=root -d mysql:8.0.14
+$ docker run --name mysql -e MYSQL_ROOT_PASSWORD=root -d mysql:8.0.14
 ~~~~ 
 Powyższa komenda sprawi, że docker będzie próbował uruchomić obraz o nazwie mysql:8.0.14. Z racji tego, że nie znajdze do wsród lokalnie dostępnych obrazów spróbuje go pobrać z reposytorium DockerHub. Po pobraniu obrazu nastąpi jego uruchomienie.
 uruchomionej instancji obrazu zostanie nadana nazwa _db_. 
@@ -107,12 +120,12 @@ $ docker ps
 ~~~~
 Następnie jest możliwość zastopowania uruchomionego obrazu i usunięcia go:
 ~~~~
-$ docker stop my-mysql
-$ docker rm my-mysql
+$ docker stop mysql
+$ docker rm mysql
 ~~~~
 Istnieje również możliwość usunięcia obrazu z lokalnego repozytorium:
 ~~~~
-docker rmi my-mysql
+docker rmi mysql
 ~~~~
 
 ### Budowanie za pomocą Dockerfile.yml
@@ -149,7 +162,7 @@ COPY ${CONFIG} /app/config
 COPY wait_for.sh /usr/local/bin/
 RUN chmod u+x /usr/local/bin/wait_for.sh
 
-ENTRYPOINT ["wait_for.sh", "-host=mysql-service", "-port=3306", "--", "java -cp app:app/lib/*:app/config/* hello.Application"]
+ENTRYPOINT ["wait_for.sh", "-host=db", "-port=3306", "--", "java -cp app:app/lib/*:app/config/* hello.Application"]
 #ENTRYPOINT ["java","-cp","app:app/lib/*:app/config/*","hello.Application"]
 ~~~~
 
@@ -343,7 +356,7 @@ docker-compose down
 
 # Kubernetes
 Jako klaster kubernetesowy będziemy używali klastra tworzonego przez minikube.
-
+## Przygotowanie środowiska
 1. Uruchamiamy minikube wywołując polecenie: `minikube --memory 4096`
 
 2. Następnie wywołujemy polecenie `minikube cluster-info` w odpowiedzi otrzymując 
@@ -355,8 +368,242 @@ KubeDNS is running at https://192.168.99.101:8443/api/v1/namespaces/kube-system/
 To further debug and diagnose cluster problems, use 'kubectl cluster-info dump'.
 ~~~~
 
-3. 
+3. Następnie powinniśmy skonfigurować naszego dockera aby używał rejestru umiejscowionego na maszynie na której zainstalowany jest klaster kubernetes. Robimy to za pomocą komendy `eval $(minikube docker-env)`
+4. Należy ponownie zbudować wszystkie potrzebne obrazy. A następnie wypchnąć je do lokalnego rejestru znajdującego się na maszynie, na której jest klaster kubernetes. 
+Zostaną one wtedy umieszczone w rejestrze dostępnym na maszynie wirtualnej minikube.
+~~~~
+$ docker build  -t localhost:5000/spring -f Dockerfile-web .
+$ docker build  -t localhost:5000/my-mysql -f Dockerfile-mysql .
+$ docker pull adminer
+$ docker tag adminer localhost:5000/adminer
+
+$ docker push localhost:5000/spring
+$ docker push localhost:5000/my-mysql
+$ docker push localhost:5000/adminer
+~~~~
+Po sprawdzeniu dostępnych w rejestrze obrazów komendą `docker images` powinny się wyświetlić dostępne obrazy. Lista opbarów powinna zawierać rekordy:
+~~~~
+REPOSITORY                                TAG                 IMAGE ID            CREATED             SIZE
+localhost:5000/spring                     latest              f8a424115642        4 minutes ago       138MB
+localhost:5000/adminer                    latest              e2d2c89239b2        4 minutes ago          84.1MB
+localhost:5000/my-mysql                   latest              ee8d73bb8b55        4 minutes ago          477MB
+~~~~
+
+5. Następnie, przechodzimy do katalogu zawierającego plik deployment.yaml poleceniem `cd kubernetes/`.
+
+~~~~
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: web-namespace
+  labels:
+    apps: web
+  annotations:
+    type: demo
+
+---
+
+#apiVersion: v1
+#kind: ResourceQuota
+#metadata:
+#  name: mem-cpu-quota
+#  namespace: web-namespace
+#spec:
+#  hard:
+#    requests.cpu: "1"
+#    requests.memory: 2Gi
+#    limits.cpu: "2"
+#    limits.memory: 3Gi
+#
+#---
+
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    name: spring-service
+  name: spring-service
+  namespace: web-namespace
+spec:
+  ports:
+    - nodePort: 31000
+      port: 8080
+      protocol: TCP
+      targetPort: 8080
+  selector:
+    name: spring-service
+  type: NodePort
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    name: adminer-service
+  name: adminer-service
+  namespace: web-namespace
+spec:
+  ports:
+    - port: 80
+      protocol: TCP
+      nodePort: 31001
+      targetPort: 8080
+  selector:
+    name: adminer
+  type: NodePort
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    name: mysql-service
+  name: db
+  namespace: web-namespace
+spec:
+  ports:
+    - port: 3306
+      protocol: TCP
+      targetPort: 3306
+  selector:
+    name: db
+  type: ClusterIP
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spring-boot
+  namespace: web-namespace
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      name: spring-service
+  template:
+    metadata:
+      labels:
+        name: spring-service
+    spec:
+      containers:
+      - image: localhost:5000/spring
+        name: spring
+        ports:
+        - containerPort: 8080
+#        resources:
+#          limits:
+#            memory: "1000m"
+#            cpu: "1000m"
+#          requests: 
+#            memory: "800m"
+#            cpu: "800m"
+
+---
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mysql
+  labels:
+    app: mysql
+    tier: backend
+  namespace: web-namespace
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      name: db
+  serviceName: mysql-service
+  template:
+    metadata:
+      labels:
+        name: db
+    spec:
+      containers:
+      - image: localhost:5000/my-mysql
+        name: db
+        ports:
+        - containerPort: 3306
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          value: root
+        - name: MYSQL_DATABASE
+          value: test
+        - name: MYSQL_USER
+          value: ponaszki
+        - name: MYSQL_PASSWORD
+          value: ponaszki
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: adminer
+  labels:
+    app: adminer
+    tier: frontend
+  namespace: web-namespace
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      name: adminer
+  template:
+    metadata:
+      labels:
+        name: adminer
+    spec:
+      containers:
+      - image: localhost:5000/adminer
+        name: adminer
+        ports:
+        - containerPort: 80
+~~~~
+W powyższym pliku są tworzone 3 deploymenty i 3 serwisy, po jednym dla każdego deploymentu. 
+Deklaracje poszczególnych obiektów oddzielone są trzema myślnikami. Typ danego obiektu opisuje wartość znajdująca się pod kluczem **kind:**. 
+Deklaracje obiektu składa się z trzech sekcji. Pierwszą z nich są metadane (_metadata_). 
+W niej znajduje się nazwa obiektu, etykiety jakimi oznaczamy obiekt, oraz ewentualnie namespace w jakim zostanie imieszczony.
+Deklaracje składają się z 3 sekcji:
+* metadata - sekcja zawierająca metadane obiektu, czyli między innymi jego nazwę, namespace w którym zostanie umieszczony obiekt o etykiety którymi jest opisywany;
+* spec - pożądana specyfikacja obiektu, która różni się w zależności od typu obiektu. 
+    - W przypadku obiektu Deployment zawiera ona
+        * replicas - ilość instancji kontenera jakie zostaną uruchomione, 
+        * selector - etykiety specyfikacji
+        * template - szablon tworzonego kontenera który składa się z kilku części
+            - metadata - metadane szablonu, w których znajdują się etykiety szablonu (muszą one być zgodne z etykietami specyfikacji) 
+            - spec - specyfikacja szablonu, w której znajdują się opisy jednego lub sięcej kontenerów. 
+            nazwy obrazów jakie zostaną stworzone do ich użycia nazwy kontenerów i specyfikacja ich portów
+    - W przypadku obiektu Service zawiera ona:
+        * ports - specyfikacja portów i protokołów jakie ma obsługiwać serwis
+        * selector - selektor według którego inne obiekty będą włączane w skład serwisu. Selektory te są porównywane na przykład z etykietami w sekcji spec.metadata obiektów typu Deployment
+        * type - typ ser4wisu. Istnieje likla typów serwisów. Jednym s nich jest serwis typu NodePort, który sprawia że serwis jest dostępny na zewnątrz hosta na którym jest umieszczony. 
+        Kolejnym jest serwis typu ClusterIP który sprawia, że serwis jest widoczny tylko w ramach klastra na którym jest uruchomiony pod wewnętrznym IP. Ostatnim jest serwis typu LoadBalancer. Zastosowanie tego typu powoduje przydzielenie temu serwisowi zewnętrznego adresu IP. 
+* status - sekcja opisująca obecny status obiektu, uzupełniana i zarządzana przez klaster kubernetesowy            
+
+Opis portów w sekcji spec może posiadać kilka elementów:
+* nodePort - port hosta na którym wystawiony jest serwis
+* port - port na którym seris nasłuchuje wewnątrz klastra
+* targetPort - port w kapsule (pod) na który wiadomość jest przesyłana
+* protocol - obsługiwany protokół
+
+Dodatkowym typem obiektu jest RasourceQuota,  która pozwala na przypisanie określonej ilości zasobów do określonj przestrzeni nazw (namespace). Sprawia to, że zużycie zasobów przez obiekty uruchomione w tej przestrzeni nazw nie może przekroczyć zadeklarowanej w niej ilości zasobów.
+Zarówno obiekty przedstawione powyżej zawierają więcej właściwości niż przedstawione powyżej. Pełny ich opis znajdije się pod [adresem][3]
+
+6. Uruchomienie wszystkich obiektów zadeklarowanych w pliku deployment.yaml odbywa się za pomocą komendy `kubectl create -f deployment.yaml`
+7. Można przetestować aplikacje:
+    * adminer - dostając się do niego przez przeglądarkę wpisując adres _192.168.99.101:31001_
+    * spring - wykonując następującą komendę:
+    ~~~~
+    $ curl -d "przykladowa wiadomosc" -H "Content-Type: application/x-www-form-urlencoded" -X POST http://<docker-machine-ip>:8090/fileLog
+    ~~~~
+
+8. Wyłączenie wszystkich obiektów zadeklarowanych w pliku _deployment.yaml_ za pomocą polecenia `kubectl delete -f deployment.yaml`
 
 
 [1]: https://github.com/pikor91/spring-docker-kubernetes.git
 [2]: https://hub.docker.com/_/mysql
+[3]: https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.13/

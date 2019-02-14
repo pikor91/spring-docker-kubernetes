@@ -1,0 +1,214 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: web-namespace
+  labels:
+    apps: web
+  annotations:
+    type: demo
+
+---
+
+#apiVersion: v1
+#kind: ResourceQuota
+#metadata:
+#  name: mem-cpu-quota
+#  namespace: web-namespace
+#spec:
+#  hard:
+#    requests.cpu: "1"
+#    requests.memory: 2Gi
+#    limits.cpu: "2"
+#    limits.memory: 3Gi
+#
+#---
+#
+#apiVersion: v1
+#kind: Service
+#metadata:
+#  labels:
+#    name: ubuntu-service
+#  name: ubuntu-service
+#  namespace: web-namespace
+#spec:
+#  ports:
+#    - port: 9000
+#      protocol: TCP
+#      targetPort: 9000
+#  selector:
+#    name: ubuntu-service
+#  type: NodePort
+#
+#---
+
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    name: spring-service
+  name: spring-service
+  namespace: web-namespace
+spec:
+  ports:
+    - port: 8088
+      protocol: TCP
+      targetPort: 8088
+  selector:
+    name: spring-service
+  type: NodePort
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    name: adminer-service
+  name: adminer-service
+  namespace: web-namespace
+spec:
+  ports:
+    - port: 80
+      protocol: TCP
+      nodePort: 31001
+      targetPort: 8080
+  selector:
+    name: adminer
+  type: NodePort
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    name: mysql-service
+  name: db
+  namespace: web-namespace
+spec:
+  ports:
+    - port: 3306
+      protocol: TCP
+      targetPort: 3306
+  selector:
+    name: db
+  type: ClusterIP
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spring-boot
+  namespace: web-namespace
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      name: spring-service
+  template:
+    metadata:
+      labels:
+        name: spring-service
+    spec:
+      containers:
+      - image: localhost:5000/spring
+        name: spring
+        ports:
+        - containerPort: 8080
+#        resources:
+#          limits:
+#            memory: "1000m"
+#            cpu: "1000m"
+#          requests: 
+#            memory: "800m"
+#            cpu: "800m"
+
+---
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mysql
+  labels:
+    app: mysql
+    tier: backend
+  namespace: web-namespace
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      name: db
+  serviceName: mysql-service
+  template:
+    metadata:
+      labels:
+        name: db
+    spec:
+      containers:
+      - image: localhost:5000/my-mysql
+        name: db
+        ports:
+        - containerPort: 3306
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          value: root
+        - name: MYSQL_DATABASE
+          value: test
+        - name: MYSQL_USER
+          value: ponaszki
+        - name: MYSQL_PASSWORD
+          value: ponaszki
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: adminer
+  labels:
+    app: adminer
+    tier: frontend
+  namespace: web-namespace
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      name: adminer
+  template:
+    metadata:
+      labels:
+        name: adminer
+    spec:
+      containers:
+      - image: localhost:5000/adminer
+        name: adminer
+        ports:
+        - containerPort: 80
+
+#---
+#
+#apiVersion: apps/v1
+#kind: Deployment
+#metadata:
+#  name: ubuntu
+#  labels:
+#    app: ubuntu
+#    tier: backend
+#  namespace: web-namespace
+#spec:
+#  replicas: 1
+#  selector:
+#    matchLabels:3
+#      name: ubuntu-service
+#  template:
+#    metadata:
+#      labels:
+#        name: ubuntu-service
+#    spec:
+#      containers:
+#      - image: localhost:5000/openjdk:8-jdk-alpine
+#        name: ubuntu
+#        command: [ "/bin/sh", "-ce", "tail -f /dev/null" ]
+#        ports:
+#        - containerPort: 8080
